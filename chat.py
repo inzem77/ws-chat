@@ -3,15 +3,22 @@ import json
 
 import aiohttp
 from aiohttp import web
+from aiopg.pool import create_pool
 
 queues = []
 history = []
+chanels = []
 
+import asyncio
+from aiopg.pool import create_pool
+
+#dsn = 'dbname=ws_chat user=ws_chat password=ws_chat host=localhost port=5432'
+#pool = yield from create_pool(dsn)
 
 async def hello(request):
     form_data = await request.post()
     if 'name' in form_data:
-        return web.HTTPFound(app.router['chat_page'].url(parts=form_data))
+        return web.HTTPFound(app.router['chat_page'].url(parts=form_data)) # get chat.html
 
     with open('home.html', 'rb') as f:
         return web.Response(body=f.read())
@@ -23,8 +30,10 @@ async def chat_page(request):
 
 
 async def new_msg(request):
+    global loop
     name = request.match_info['name']
-    read_task = asyncio.Task(request.content.read())
+    #read_task = asyncio.Task(request.content.read())
+    read_task = loop.create_task(request.content.read())
     message = (await read_task).decode('utf-8')
     await send_message(name, message)
     return web.Response(body=b'OK')
@@ -51,15 +60,17 @@ class WebSocketResponse(web.WebSocketResponse):
 
 
 async def websocket_handler(request):
+    global loop
     name = request.match_info['name']
     ws = WebSocketResponse()
-    ws.start(request)
+    await ws.prepare(request)
     await send_message('system', '{} joined!'.format(name))
 
     for message in list(history):
         ws.send_str(message)
 
-    echo_task = asyncio.Task(echo_loop(ws))
+    #echo_task = asyncio.Task(echo_loop(ws))
+    echo_task = loop.create_task(echo_loop(ws))
 
     async for msg in ws:
 
