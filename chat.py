@@ -1,13 +1,20 @@
 import asyncio
 import json
+import time
+import os
 
 import aiohttp
 from aiohttp import web
 from aiopg.pool import create_pool
+from aiohttp import web
+from aiohttp_session import get_session, session_middleware, SimpleCookieStorage
+from aiohttp_session.cookie_storage import EncryptedCookieStorage
+import aiohttp_jinja2
+import jinja2
 
 queues = []
-history = []
-chanels = []
+history = {}
+channels = []
 
 import asyncio
 from aiopg.pool import create_pool
@@ -15,37 +22,61 @@ from aiopg.pool import create_pool
 #dsn = 'dbname=ws_chat user=ws_chat password=ws_chat host=localhost port=5432'
 #pool = yield from create_pool(dsn)
 
+ROOT = os.path.abspath(os.path.dirname(__file__))
+path = lambda *args: os.path.join(ROOT, *args)
+
+async def admin(request, host=""):
+    form_data = await request.post()
+    host = request.match_info.get('host', None)
+    session = await get_session(request)
+    session['last_visit'] = time.time()
+    session['nickname'] = 'admin'
+    if host:
+        h = history[host] if host in history else {}
+        return aiohttp_jinja2.render_template('admin.html', request, {'host': h})
+
+    return aiohttp_jinja2.render_template('admin.html', request, {'hosts': history})
+
+
 async def hello(request):
     form_data = await request.post()
-    if 'name' in form_data:
-        return web.HTTPFound(app.router['chat_page'].url(parts=form_data)) # get chat.html
+    session = await get_session(request)
+    session['last_visit'] = time.time()
+    host = request.host[:request.host.find(':')] # host
+    if 'nickname' in form_data and form_data['nickname'] != 'admin':
+        session['nickname'] = form_data['nickname']
+        return web.HTTPFound(app.router['chat_page'].url(parts={'host':host})) # get chat.html
 
-    with open('home.html', 'rb') as f:
-        return web.Response(body=f.read())
+    return aiohttp_jinja2.render_template('home.html', request, {})
 
 
 async def chat_page(request):
-    with open('chat.html', 'rb') as f:
-        return web.Response(body=f.read())
+    return aiohttp_jinja2.render_template('chat.html', request, {})
 
 
 async def new_msg(request):
     global loop
-    name = request.match_info['name']
-    #read_task = asyncio.Task(request.content.read())
+    session = await get_session(request)
+    nickname = session['nickname']
+    form_data = await request.post()
+    host = request.host[:request.host.find(':')] # host
     read_task = loop.create_task(request.content.read())
     message = (await read_task).decode('utf-8')
-    await send_message(name, message)
+    await send_message(host, nickname, message)
     return web.Response(body=b'OK')
 
 
-async def send_message(name, message):
-    print('{}: {}'.format(name, message).strip())
-    history.append('{}: {}'.format(name, message))
-    if len(history) > 20:
-        del history[:-10]
+async def send_message(host, nickname, message):
+    print('{}: {}'.format(nickname, message).strip())
+    if host not in history.keys():
+        history[host]= {}
+    if nickname not in history[host].keys():
+        history[host][nickname] = []
+    history[host][nickname].append('{}: {}'.format(nickname, message))
+    if len(history[host][nickname]) > 20:
+        del history[host][nickname][:-10]
     for queue in queues:
-        await queue.put((name, message))
+        await queue.put((host, nickname, message))
 
 
 class WebSocketResponse(web.WebSocketResponse):
@@ -61,15 +92,18 @@ class WebSocketResponse(web.WebSocketResponse):
 
 async def websocket_handler(request):
     global loop
-    name = request.match_info['name']
+    host = request.host[:request.host.find(':')] # host
+    session = await get_session(request)
+    nickname = session['nickname']
     ws = WebSocketResponse()
     await ws.prepare(request)
-    await send_message('system', '{} joined!'.format(name))
+    await send_message(host, 'system', 'We are connected to {} host!'.format(host))
 
-    for message in list(history):
-        ws.send_str(message)
+    if host in history:
+        if nickname in history[host]:
+            for message in list(history[host][nickname]):
+                ws.send_str(message)
 
-    #echo_task = asyncio.Task(echo_loop(ws))
     echo_task = loop.create_task(echo_loop(ws))
 
     async for msg in ws:
@@ -83,7 +117,7 @@ async def websocket_handler(request):
         else:
             print('ws connection received unknown message type %s' % msg.tp)
 
-    await send_message('system', '{} left!'.format(name))
+    await send_message('system', '{} left!'.format(host))
     echo_task.cancel()
     await echo_task
     return ws
@@ -93,18 +127,23 @@ async def echo_loop(ws):
     queues.append(queue)
     try:
         while True:
-            name, message = await queue.get()
-            ws.send_str('{}: {}'.format(name, message))
+            host, name, message = await queue.get()
+            ws.send_str('{}: {}: {}'.format(host, name, message))
     finally:
         queues.remove(queue)
 
 
-app = web.Application()
+app = web.Application(middlewares=[session_middleware(
+        SimpleCookieStorage())])
+aiohttp_jinja2.setup(app,
+    loader=jinja2.FileSystemLoader(path('templates')))
+app.router.add_route('GET', '/admin/', admin)
+app.router.add_route('GET', '/admin/{host}/', admin)
 app.router.add_route('GET', '/', hello)
 app.router.add_route('POST', '/', hello)
-app.router.add_route('GET', '/{name}/', chat_page, name='chat_page')
-app.router.add_route('POST', '/{name}/', new_msg)
-app.router.add_route('GET', '/{name}/ws/', websocket_handler)
+app.router.add_route('GET', '/{host}/', chat_page, name='chat_page')
+app.router.add_route('POST', '/{host}/', new_msg)
+app.router.add_route('GET', '/{host}/ws/', websocket_handler)
 
 loop = asyncio.get_event_loop()
 handler = app.make_handler()
