@@ -142,8 +142,9 @@ async def echo_loop(ws):
         queues.remove(queue)
 
 
-async def create_redis_pool(host, port):
-    await aioredis.create_pool((host, port), loop=loop)
+@asyncio.coroutine
+def create_redis_pool(host, port):
+    yield from aioredis.create_pool((host, port), loop=loop)
     #redis_pool = await aioredis.create_connection(('localhost', 6379), loop=loop)
 
 #redis_pool = create_redis_pool('localhost', 6379)
