@@ -5,22 +5,23 @@ import os
 
 import aiohttp
 from aiohttp import web
-from aiopg.pool import create_pool
+#from aiopg.pool import create_pool
 from aiohttp import web
 from aiohttp_session import get_session, session_middleware, SimpleCookieStorage
 from aiohttp_session.cookie_storage import EncryptedCookieStorage
 from aiohttp_session.redis_storage import RedisStorage
 import aiohttp_session
+from aiohttp_session import redis_storage, session_middleware
 import aioredis
 import aiohttp_jinja2
 import jinja2
+from aioredis import create_pool
 
 queues = []
 history = {}
 channels = []
-
+app = None
 import asyncio
-from aiopg.pool import create_pool
 
 loop = asyncio.get_event_loop()
 #dsn = 'dbname=ws_chat user=ws_chat password=ws_chat host=localhost port=5432'
@@ -142,9 +143,9 @@ async def echo_loop(ws):
         queues.remove(queue)
 
 
-@asyncio.coroutine
-def create_redis_pool(host, port):
-    yield from aioredis.create_pool((host, port), loop=loop)
+#@asyncio.coroutine
+#def create_redis_pool(host, port):
+#    yield from aioredis.create_pool((host, port), loop=loop)
     #redis_pool = await aioredis.create_connection(('localhost', 6379), loop=loop)
 
 #redis_pool = create_redis_pool('localhost', 6379)
@@ -156,27 +157,39 @@ def create_redis_pool(host, port):
 #app = web.Application(middlewares=[session_middleware(
 #        RedisStorage(create_redis_pool('localhost', 6379)))])
 
-redis = create_redis_pool('localhost', 6379)
-storage = aiohttp_session.redis_storage.RedisStorage(redis)
-session_middleware = aiohttp_session.session_middleware(storage)
-app = aiohttp.web.Application(middlewares=[session_middleware])
+#redis = create_redis_pool('localhost', 6379)
+#redis = create_redis_pool('localhost', 6379)
+#storage = aiohttp_session.redis_storage.RedisStorage(redis)
+#session_middleware = aiohttp_session.session_middleware(storage)
+#app = aiohttp.web.Application(middlewares=[session_middleware])
 
-aiohttp_jinja2.setup(app,
-    loader=jinja2.FileSystemLoader(path('templates')))
-app.router.add_route('GET', '/admin/', admin)
-app.router.add_route('GET', '/admin/{host}/', admin)
-app.router.add_route('GET', '/admin/{host}/{nickname}/', chat_page_admin)
-app.router.add_route('POST', '/admin/{host}/{nickname}/', new_msg)
-app.router.add_route('GET', '/admin/{host}/{nickname}/ws/', websocket_handler)
-app.router.add_route('GET', '/', hello)
-app.router.add_route('POST', '/', hello)
-app.router.add_route('GET', '/{host}/', chat_page, name='chat_page')
-app.router.add_route('POST', '/{host}/', new_msg)
-app.router.add_route('GET', '/{host}/ws/', websocket_handler)
 
-handler = app.make_handler()
-f = loop.create_server(handler, '0.0.0.0', 8080)
-srv = loop.run_until_complete(f)
+async def init(loop):
+    global app
+    redis = await create_pool(('localhost', 6379))
+    storage = redis_storage.RedisStorage(redis)
+    session_middleware1 = session_middleware(storage)
+    app = web.Application(middlewares=[session_middleware1])
+    #app = web.Application(middlewares=[session_middleware(
+    #    EncryptedCookieStorage(b'Thirty  two  length  bytes  key.'))])
+    aiohttp_jinja2.setup(app,
+        loader=jinja2.FileSystemLoader(path('templates')))
+    app.router.add_route('GET', '/admin/', admin)
+    app.router.add_route('GET', '/admin/{host}/', admin)
+    app.router.add_route('GET', '/admin/{host}/{nickname}/', chat_page_admin)
+    app.router.add_route('POST', '/admin/{host}/{nickname}/', new_msg)
+    app.router.add_route('GET', '/admin/{host}/{nickname}/ws/', websocket_handler)
+    app.router.add_route('GET', '/', hello)
+    app.router.add_route('POST', '/', hello)
+    app.router.add_route('GET', '/{host}/', chat_page, name='chat_page')
+    app.router.add_route('POST', '/{host}/', new_msg)
+    app.router.add_route('GET', '/{host}/ws/', websocket_handler)
+
+    srv = await loop.create_server(
+        app.make_handler(), '0.0.0.0', 8080)
+    return srv
+
+loop.run_until_complete(init(loop))
 
 async def end():
     await handler.finish_connections(1.0)
@@ -185,7 +198,7 @@ async def end():
     await app.finish()
     redis_pool.close()
 
-print('serving on', srv.sockets[0].getsockname())
+#print('serving on', srv.sockets[0].getsockname())
 try:
     loop.run_forever()
 except KeyboardInterrupt:
