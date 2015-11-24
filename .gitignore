@@ -1,6 +1,5 @@
 *~
 *.pyc
-.idea
 *.log
 *.tar.gz
 *.tgz
