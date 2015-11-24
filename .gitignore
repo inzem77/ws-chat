@@ -1,0 +1,16 @@
+*~
+*.pyc
+.idea
+*.log
+*.tar.gz
+*.tgz
+*.gz
+*.tar
+*.pyo
+*.png
+*.jpg
+*.JPEG
+*.jpeg
+*.zip
+*.swo
+*.swp
